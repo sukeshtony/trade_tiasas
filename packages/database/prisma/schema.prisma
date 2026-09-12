@@ -1,0 +1,501 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String              @id @default(cuid())
+  name              String?
+  email             String?             @unique
+  emailVerified     DateTime?
+  password          String?
+  image             String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  accounts          Account[]
+  auditLogs         AuditLog[]
+  brokerConnections BrokerConnection[]  @relation("BrokerConnectionUser")
+  journalEntries    JournalEntry[]
+  memberships       Membership[]
+  sessions          Session[]
+  preferences       UserPreferences?
+  onboardingProgress OnboardingProgress?
+  sentInvitations   Invitation[]        @relation("InvitedBy")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Org {
+  id                         String                        @id @default(cuid())
+  name                       String
+  createdAt                  DateTime                      @default(now())
+  updatedAt                  DateTime                      @updatedAt
+  auditLogs                  AuditLog[]
+  brokerConnections          BrokerConnection[]            @relation("BrokerConnectionOrg")
+  connections                Connection[]
+  dailyPnl                   DailyPnl[]
+  journal                    JournalEntry[]
+  memberships                Membership[]
+  yearlyPerformanceSettings  YearlyPerformanceSettings[]
+  capitalTransfers           CapitalTransfer[]
+  invitations                Invitation[]
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  orgId     String
+  role      Role
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+}
+
+model Invitation {
+  id         String           @id @default(cuid())
+  email      String
+  orgId      String
+  role       Role
+  invitedBy  String
+  token      String           @unique @default(cuid())
+  status     InvitationStatus @default(PENDING)
+  expiresAt  DateTime
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  org        Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  inviter    User             @relation("InvitedBy", fields: [invitedBy], references: [id], onDelete: Cascade)
+
+  @@unique([email, orgId])
+  @@index([token])
+  @@index([orgId])
+}
+
+model JournalEntry {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String
+  date      DateTime
+  text      String
+  tags      String[]
+  isWinner  Boolean?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model DailyPnl {
+  id            String   @id @default(cuid())
+  orgId         String
+  date          DateTime
+  realizedPnl   Decimal  @db.Decimal(20, 8)
+  unrealizedPnl Decimal  @db.Decimal(20, 8)
+  totalEquity   Decimal? @db.Decimal(20, 8)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  note          String?
+  org           Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, date])
+}
+
+model BenchmarkSnapshot {
+  id        String   @id @default(cuid())
+  date      DateTime
+  symbol    String
+  price     Decimal  @db.Decimal(20, 8)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([symbol, date])
+}
+
+model Connection {
+  id        String             @id @default(cuid())
+  orgId     String
+  provider  ConnectionProvider
+  status    ConnectionStatus
+  createdBy String
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  org       Org                @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String?
+  action    String
+  entity    String
+  entityId  String
+  before    Json?
+  after     Json?
+  at        DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id])
+}
+
+model MonthlyNavEom {
+  id        String    @id @default(dbgenerated("gen_random_uuid()"))
+  orgId     String
+  date      DateTime  @db.Date
+  nav       Decimal   @db.Decimal(20, 8)
+  note      String?
+  createdAt DateTime? @default(now()) @db.Timestamp(6)
+  updatedAt DateTime? @default(now()) @updatedAt @db.Timestamp(6)
+
+  @@unique([orgId, date], map: "MonthlyNav_eom_org_date_uq")
+  @@map("MonthlyNav_eom")
+}
+
+model BrokerConnection {
+  id            String                 @id @default(dbgenerated("(gen_random_uuid())::text"))
+  orgId         String
+  userId        String
+  broker        BrokerProvider
+  brokerSource  String?                // Source broker name for CSV imports (ETRADE, FIDELITY, etc.)
+  status        BrokerConnectionStatus
+  encryptedAuth Json?
+  lastSyncedAt  DateTime?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  accounts      BrokerAccount[]
+  org           Org                    @relation("BrokerConnectionOrg", fields: [orgId], references: [id], onDelete: Cascade)
+  user          User                   @relation("BrokerConnectionUser", fields: [userId], references: [id], onDelete: Cascade)
+  syncLogs      SyncLog[]
+
+  @@index([orgId])
+  @@index([userId])
+  @@index([orgId, broker, brokerSource])
+}
+
+model BrokerAccount {
+  id                String             @id @default(dbgenerated("(gen_random_uuid())::text"))
+  connectionId      String
+  nickname          String?
+  maskedNumber      String?
+  accountType       String?
+  lastSyncedAt      DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  connection        BrokerConnection   @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  positionSnapshots PositionSnapshot[]
+  syncLogs          SyncLog[]
+
+  @@index([connectionId])
+}
+
+model Instrument {
+  id                     String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  symbol                 String
+  exchange               String?
+  name                   String?
+  assetClass             AssetClass
+  currency               String        @default("USD")
+  cusip                  String?
+  isin                   String?
+  underlyingInstrumentId String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  underlyingInstrument   Instrument?   @relation("UnderlyingOption", fields: [underlyingInstrumentId], references: [id])
+  derivedInstruments     Instrument[]  @relation("UnderlyingOption")
+  optionDetail           OptionDetail?
+  positionLots           PositionLot[]
+
+  @@unique([symbol, exchange])
+  @@index([symbol])
+  @@index([assetClass])
+}
+
+model OptionDetail {
+  instrumentId String      @id
+  right        OptionRight
+  strike       Decimal     @db.Decimal(20, 8)
+  expiration   DateTime    @db.Date
+  multiplier   Decimal     @default(100) @db.Decimal(10, 2)
+  instrument   Instrument  @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+}
+
+model PositionSnapshot {
+  id             String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  accountId      String
+  asOf           DateTime
+  cashTotal      Decimal       @default(0) @db.Decimal(20, 8)
+  marketValue    Decimal       @default(0) @db.Decimal(20, 8)
+  costBasisTotal Decimal       @default(0) @db.Decimal(20, 8)
+  currency       String        @default("USD")
+  createdAt      DateTime      @default(now())
+  positionLots   PositionLot[]
+  account        BrokerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, asOf])
+  @@index([asOf])
+}
+
+model PositionLot {
+  id              String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+  snapshotId      String
+  instrumentId    String
+  quantity        Decimal          @db.Decimal(20, 8)
+  averagePrice    Decimal?         @db.Decimal(20, 8)
+  costBasis       Decimal?         @db.Decimal(20, 8)
+  marketPrice     Decimal?         @db.Decimal(20, 8)
+  marketValue     Decimal?         @db.Decimal(20, 8)
+  unrealizedPL    Decimal?         @db.Decimal(20, 8)
+  unrealizedPLPct Decimal?         @db.Decimal(10, 6)
+  basisMethod     BasisMethod      @default(UNKNOWN)
+  basisAggregate  Boolean          @default(false)
+  metadata        Json?
+  createdAt       DateTime         @default(now())
+  instrument      Instrument       @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  snapshot        PositionSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+  @@index([instrumentId])
+}
+
+model SyncLog {
+  id           String            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  connectionId String?
+  accountId    String?
+  startedAt    DateTime
+  finishedAt   DateTime?
+  result       String?
+  message      String?
+  createdAt    DateTime          @default(now())
+  account      BrokerAccount?    @relation(fields: [accountId], references: [id])
+  connection   BrokerConnection? @relation(fields: [connectionId], references: [id])
+
+  @@index([connectionId])
+  @@index([accountId])
+  @@index([startedAt])
+}
+
+model BulkImport {
+  id        String    @id
+  orgId     String
+  userId    String?
+  type      String
+  summary   Json
+  before    Json?
+  after     Json?
+  createdAt DateTime? @default(now()) @db.Timestamp(6)
+}
+
+model Trade {
+  id          String    @id
+  orgId       String
+  userId      String
+  date        DateTime
+  symbol      String
+  side        TradeSide
+  qty         Decimal   @db.Decimal(20, 8)
+  price       Decimal   @db.Decimal(20, 8)
+  fees        Decimal   @db.Decimal(20, 8)
+  strategyTag String
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum ConnectionProvider {
+  PAPER
+  ETRADE
+  ROBINHOOD
+  FIDELITY
+  SCHWAB
+}
+
+enum ConnectionStatus {
+  DISCONNECTED
+  CONNECTED
+}
+
+enum BrokerProvider {
+  ROBINHOOD
+  ETRADE
+  FIDELITY
+  SCHWAB
+  CSV_IMPORT
+  OFX_IMPORT
+}
+
+enum BrokerConnectionStatus {
+  ACTIVE
+  EXPIRED
+  ERROR
+  DISCONNECTED
+}
+
+enum AssetClass {
+  EQUITY
+  ETF
+  OPTION
+  FUND
+  BOND
+  CRYPTO
+  CASH
+  UNKNOWN
+}
+
+enum OptionRight {
+  CALL
+  PUT
+}
+
+enum BasisMethod {
+  FIFO
+  LIFO
+  AVERAGE
+  SPECIFIC_LOT
+  UNKNOWN
+}
+
+enum TradeSide {
+  BUY
+  SELL
+  SELL_CALL
+  SELL_PUT
+  ASSIGN
+  EXPIRE
+}
+
+model YearlyPerformanceSettings {
+  id              String    @id @default(dbgenerated("gen_random_uuid()"))
+  orgId           String
+  year            Int
+  startingCapital Decimal   @db.Decimal(20, 8)
+  benchmarks      String[]  @default(["SPY", "QQQ"])
+  createdAt       DateTime? @default(now()) @db.Timestamp(6)
+  updatedAt       DateTime? @default(now()) @updatedAt @db.Timestamp(6)
+
+  org             Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, year], map: "YearlyPerformanceSettings_org_year_uq")
+  @@index([orgId, year], map: "YearlyPerformanceSettings_orgId_year_idx")
+}
+
+model CapitalTransfer {
+  id        String       @id @default(dbgenerated("gen_random_uuid()"))
+  orgId     String
+  date      DateTime     @db.Date
+  amount    Decimal      @db.Decimal(20, 8)
+  type      TransferType
+  note      String?
+  createdAt DateTime?    @default(now()) @db.Timestamp(6)
+  updatedAt DateTime?    @default(now()) @updatedAt @db.Timestamp(6)
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, date], map: "CapitalTransfer_org_date_idx")
+}
+
+enum TransferType {
+  DEPOSIT
+  WITHDRAWAL
+}
+
+// AI Provider Configuration
+model AiConfig {
+  id          String    @id @default(dbgenerated("gen_random_uuid()"))
+  orgId       String    @unique
+  provider    String    @default("openai") // openai, openrouter, custom
+  baseUrl     String    @default("https://api.openai.com/v1")
+  apiKey      String?   // Encrypted API key (null = use env var)
+  model       String    @default("gpt-4o-mini")
+  temperature Float     @default(0.2)
+  createdAt   DateTime? @default(now()) @db.Timestamp(6)
+  updatedAt   DateTime? @default(now()) @updatedAt @db.Timestamp(6)
+
+  @@index([orgId])
+}
+
+// User Preferences and Onboarding
+model UserPreferences {
+  id                  String            @id @default(cuid())
+  userId              String            @unique
+  onboardingCompleted Boolean           @default(false)
+  proficiencyLevel    ProficiencyLevel?
+  goals               String[]          @default([])
+  showTutorialHints   Boolean           @default(true)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model OnboardingProgress {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  currentStep Int      @default(1)
+  wizardData  Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum ProficiencyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  PROFESSIONAL
+}
